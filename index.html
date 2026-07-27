@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Physics & Math Cannon Master</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: #111827;
+            color: #f3f4f6;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background: #1f2937;
+            border-bottom: 2px solid #374151;
+        }
+
+        .stat-box {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .stat-value {
+            color: #3b82f6;
+            font-size: 18px;
+        }
+
+        canvas {
+            background: linear-gradient(to bottom, #0f172a, #1e293b);
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            aspect-ratio: 16 / 9;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        .controls {
+            width: 100%;
+            background: #1f2937;
+            padding: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        label {
+            font-size: 12px;
+            color: #9ca3af;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: #3b82f6;
+            cursor: pointer;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.96);
+            background: #1d4ed8;
+        }
+
+        .formula-box {
+            position: absolute;
+            top: 60px;
+            left: 15px;
+            background: rgba(17, 24, 39, 0.85);
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #374151;
+            font-size: 12px;
+            color: #60a5fa;
+            pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            header { padding: 8px 12px; }
+            .stat-box { font-size: 12px; }
+            .stat-value { font-size: 15px; }
+            .controls { padding: 10px; gap: 8px; }
+            button { padding: 10px; font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <header>
+        <div class="stat-box">SKOR: <span id="score" class="stat-value">0</span></div>
+        <div class="stat-box">TARGET: <span id="target-dist" class="stat-value">0</span> m</div>
+        <div class="stat-box">GRAVITASI (g): <span id="gravity-val" class="stat-value">9.8</span> m/s²</div>
+    </header>
+
+    <div class="formula-box">
+        <b>Rumus Fisika:</b><br>
+        x = v₀ · cos(θ) · t<br>
+        y = v₀ · sin(θ) · t - ½ g t²
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="450"></canvas>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Sudut (θ): <span id="angle-val">45</span>°</label>
+            <input type="range" id="angle" min="10" max="85" value="45">
+        </div>
+        <div class="control-group">
+            <label>Kecepatan (v₀): <span id="velocity-val">60</span> m/s</label>
+            <input type="range" id="velocity" min="20" max="100" value="60">
+        </div>
+        <button id="fire-btn">TEMBAK! 🔥</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI Elements
+    const angleInput = document.getElementById('angle');
+    const velocityInput = document.getElementById('velocity');
+    const angleVal = document.getElementById('angle-val');
+    const velocityVal = document.getElementById('velocity-val');
+    const fireBtn = document.getElementById('fire-btn');
+    const scoreEl = document.getElementById('score');
+    const targetDistEl = document.getElementById('target-dist');
+
+    // Game Variables
+    let score = 0;
+    const g = 9.8; // Gravitasi
+    const scale = 3.5; // Skala meter ke pixel
+    const cannonX = 50;
+    const cannonY = 380;
+
+    let target = { x: 0, y: cannonY, radius: 25 };
+    let projectile = null;
+    let trajectoryPoints = [];
+    let particles = [];
+
+    // Web Audio Synthesizer (Efek Suara tanpa asset luar)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSound(freq, duration, type='sine') {
+        try {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        } catch(e){}
+    }
+
+    function initTarget() {
+        // Target acak antara 100m sampai 200m
+        const distMeters = Math.floor(Math.random() * 100) + 90;
+        target.x = cannonX + (distMeters * scale);
+        targetDistEl.textContent = distMeters;
+    }
+
+    function updateInputs() {
+        angleVal.textContent = angleInput.value;
+        velocityVal.textContent = velocityInput.value;
+        calculateTrajectoryPreview();
+    }
+
+    function calculateTrajectoryPreview() {
+        trajectoryPoints = [];
+        const rad = (angleInput.value * Math.PI) / 180;
+        const v0 = parseFloat(velocityInput.value);
+        const vx = v0 * Math.cos(rad);
+        const vy = v0 * Math.sin(rad);
+
+        // Simulasi titik lintasan (Garis Putus-Putus)
+        for (let t = 0; t < 10; t += 0.15) {
+            const px = cannonX + (vx * t) * scale;
+            const py = cannonY - ((vy * t) - (0.5 * g * t * t)) * scale;
+            if (py > cannonY) break;
+            trajectoryPoints.push({x: px, y: py});
+        }
+    }
+
+    function fire() {
+        if (projectile) return; // Mencegah tembakan ganda saat masih terbang
+
+        playSound(150, 0.3, 'sawtooth');
+
+        const rad = (angleInput.value * Math.PI) / 180;
+        const v0 = parseFloat(velocityInput.value);
+
+        projectile = {
+            x: cannonX,
+            y: cannonY,
+            vx: v0 * Math.cos(rad),
+            vy: v0 * Math.sin(rad),
+            t: 0
+        };
+    }
+
+    function createExplosion(x, y, color) {
+        for (let i = 0; i < 20; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 8,
+                vy: (Math.random() - 0.5) * 8,
+                life: 1.0,
+                color: color
+            });
+        }
+    }
+
+    function update() {
+        // Update Projectile Physics
+        if (projectile) {
+            projectile.t += 0.04;
+            const xMeters = projectile.vx * projectile.t;
+            const yMeters = (projectile.vy * projectile.t) - (0.5 * g * projectile.t * projectile.t);
+
+            projectile.x = cannonX + (xMeters * scale);
+            projectile.y = cannonY - (yMeters * scale);
+
+            // Cek Tabrakan dengan Target
+            const dx = projectile.x - target.x;
+            const dy = projectile.y - target.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < target.radius) {
+                // Kena Target!
+                score += 10;
+                scoreEl.textContent = score;
+                playSound(600, 0.4, 'sine');
+                createExplosion(target.x, target.y, '#10b981');
+                projectile = null;
+                initTarget();
+            } else if (projectile.y >= cannonY) {
+                // Meleset / Jatuh ke tanah
+                playSound(80, 0.4, 'square');
+                createExplosion(projectile.x, cannonY, '#ef4444');
+                projectile = null;
+            }
+        }
+
+        // Update Partikel
+        particles.forEach((p, index) => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= 0.03;
+            if (p.life <= 0) particles.splice(index, 1);
+        });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Tanah / Ground
+        ctx.fillStyle = '#374151';
+        ctx.fillRect(0, cannonY, canvas.width, canvas.height - cannonY);
+
+        // Garis Grid Jarak
+        ctx.strokeStyle = '#1f2937';
+        ctx.lineWidth = 1;
+        for (let m = 50; m <= 220; m += 25) {
+            let xPos = cannonX + (m * scale);
+            ctx.beginPath();
+            ctx.moveTo(xPos, 0);
+            ctx.lineTo(xPos, cannonY);
+            ctx.stroke();
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px sans-serif';
+            ctx.fillText(m + 'm', xPos - 10, cannonY + 15);
+        }
+
+        // Prediksi Trajektori (Garis Putus-Putus)
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+        ctx.lineWidth = 2;
+        trajectoryPoints.forEach((p, i) => {
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset line dash
+
+        // Target
+        ctx.beginPath();
+        ctx.arc(target.x, target.y - 5, target.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(target.x, target.y - 5, target.radius * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(target.x, target.y - 5, target.radius * 0.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+
+        // Meriam (Cannon)
+        ctx.save();
+        ctx.translate(cannonX, cannonY);
+        const rad = (-angleInput.value * Math.PI) / 180;
+        ctx.rotate(rad);
+        ctx.fillStyle = '#9ca3af';
+        ctx.fillRect(0, -8, 35, 16);
+        ctx.restore();
+
+        // Pangkalan Meriam
+        ctx.beginPath();
+        ctx.arc(cannonX, cannonY, 15, 0, Math.PI * 2);
+        ctx.fillStyle = '#4b5563';
+        ctx.fill();
+
+        // Peluru (Projectile)
+        if (projectile) {
+            ctx.beginPath();
+            ctx.arc(projectile.x, projectile.y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fill();
+        }
+
+        // Partikel Ledakan
+        particles.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.life;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+        });
+    }
+
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Event Listeners
+    angleInput.addEventListener('input', updateInputs);
+    velocityInput.addEventListener('input', updateInputs);
+    fireBtn.addEventListener('click', fire);
+
+    // Keyboard controls (Spacebar untuk tembak)
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') fire();
+    });
+
+    // Inisialisasi
+    initTarget();
+    updateInputs();
+    gameLoop();
+</script>
+</body>
+</html>
